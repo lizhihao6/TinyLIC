@@ -37,7 +37,7 @@ import sys
 import time
 
 from collections import defaultdict
-from typing import List
+from typing import List, Union
 
 import torch
 import torch.nn as nn
@@ -89,6 +89,16 @@ def read_image(filepath: str) -> torch.Tensor:
     return transforms.ToTensor()(img)
 
 
+def calculate_bytes(strings: Union[list, bytes]) -> int:
+    if isinstance(strings, list):
+        num_bytes = sum([calculate_bytes(s) for s in strings])
+    elif isinstance(strings, bytes):
+        num_bytes = len(strings)
+    else:
+        raise ValueError("strings must be list or bytes")
+    return num_bytes
+
+
 @torch.no_grad()
 def inference(model, x):
     x = x.unsqueeze(0)
@@ -121,7 +131,8 @@ def inference(model, x):
     )
 
     num_pixels = x.size(0) * x.size(2) * x.size(3)
-    bpp = sum(len(s[0]) for s in out_enc["strings"]) * 8.0 / num_pixels
+    num_bytes = calculate_bytes(out_enc["strings"])
+    bpp = num_bytes * 8.0 / num_pixels
 
     return {
         "psnr": psnr(x, out_dec["x_hat"]),

@@ -42,6 +42,7 @@ from torch import Tensor
 from compressai._CXX import pmf_to_quantized_cdf as _pmf_to_quantized_cdf
 from compressai.ops import LowerBound
 
+from mmcv.ops import rans_encode_with_indexes, rans_decode_with_indexes
 
 class _EntropyCoder:
     """Proxy class to an actual entropy coder class."""
@@ -257,12 +258,13 @@ class EntropyModel(nn.Module):
 
         strings = []
         for i in range(symbols.size(0)):
-            rv = self.entropy_coder.encode_with_indexes(
-                symbols[i].reshape(-1).int().tolist(),
-                indexes[i].reshape(-1).int().tolist(),
-                self._quantized_cdf.tolist(),
-                self._cdf_length.reshape(-1).int().tolist(),
-                self._offset.reshape(-1).int().tolist(),
+            rv = rans_encode_with_indexes(
+                symbols[i].reshape(-1).int(),
+                indexes[i].reshape(-1).int(),
+                self._quantized_cdf,
+                self._cdf_length,
+                self._offset,
+                num_threads=1,
             )
             strings.append(rv)
         return strings
@@ -311,15 +313,12 @@ class EntropyModel(nn.Module):
         outputs = cdf.new_empty(indexes.size())
 
         for i, s in enumerate(strings):
-            values = self.entropy_coder.decode_with_indexes(
+            outputs[i] = rans_decode_with_indexes(
                 s,
-                indexes[i].reshape(-1).int().tolist(),
-                cdf.tolist(),
-                self._cdf_length.reshape(-1).int().tolist(),
-                self._offset.reshape(-1).int().tolist(),
-            )
-            outputs[i] = torch.tensor(
-                values, device=outputs.device, dtype=outputs.dtype
+                indexes[i].reshape(-1).int(),
+                cdf,
+                self._cdf_length,
+                self._offset,
             ).reshape(outputs[i].size())
         outputs = self.dequantize(outputs, means, dtype)
         return outputs
@@ -402,7 +401,7 @@ class EntropyBottleneck(EntropyModel):
         maxima = torch.ceil(maxima).int()
         maxima = torch.clamp(maxima, min=0)
 
-        self._offset = -minima
+        self._offset = (-minima).reshape(-1).int()
 
         pmf_start = medians - minima
         pmf_length = maxima + minima + 1
@@ -425,7 +424,7 @@ class EntropyBottleneck(EntropyModel):
 
         quantized_cdf = self._pmf_to_cdf(pmf, tail_mass, pmf_length, max_length)
         self._quantized_cdf = quantized_cdf
-        self._cdf_length = pmf_length + 2
+        self._cdf_length = (pmf_length + 2).reshape(-1).int()
         return True
 
     def loss(self) -> Tensor:
@@ -516,15 +515,14 @@ class EntropyBottleneck(EntropyModel):
         return outputs, likelihood
 
     @staticmethod
-    def _build_indexes(size):
+    def _build_indexes(size, device):
         dims = len(size)
         N = size[0]
         C = size[1]
 
         view_dims = np.ones((dims,), dtype=np.int64)
         view_dims[1] = -1
-        indexes = torch.arange(C).view(*view_dims)
-        indexes = indexes.int()
+        indexes = torch.arange(C, dtype=torch.int32, device=device).view(*view_dims)
 
         return indexes.repeat(N, 1, *size[2:])
 
@@ -533,7 +531,7 @@ class EntropyBottleneck(EntropyModel):
         return tensor.reshape(-1, *([1] * n)) if n > 0 else tensor.reshape(-1)
 
     def compress(self, x):
-        indexes = self._build_indexes(x.size())
+        indexes = self._build_indexes(x.size(), x.device)
         medians = self._get_medians().detach()
         spatial_dims = len(x.size()) - 2
         medians = self._extend_ndims(medians, spatial_dims)
@@ -542,7 +540,7 @@ class EntropyBottleneck(EntropyModel):
 
     def decompress(self, strings, size):
         output_size = (len(strings), self._quantized_cdf.size(0), *size)
-        indexes = self._build_indexes(output_size).to(self._quantized_cdf.device)
+        indexes = self._build_indexes(output_size, self.quantized_cdf.device)
         medians = self._extend_ndims(self._get_medians().detach(), len(size))
         medians = medians.expand(len(strings), *([-1] * (len(size) + 1)))
         return super().decompress(strings, indexes, medians.dtype, medians)
@@ -643,9 +641,9 @@ class GaussianConditional(EntropyModel):
 
         quantized_cdf = torch.Tensor(len(pmf_length), max_length + 2)
         quantized_cdf = self._pmf_to_cdf(pmf, tail_mass, pmf_length, max_length)
-        self._quantized_cdf = quantized_cdf
-        self._offset = -pmf_center
-        self._cdf_length = pmf_length + 2
+        self._quantized_cdf = quantized_cdf.int()
+        self._offset = (-pmf_center).reshape(-1).int()
+        self._cdf_length = pmf_length.reshape(-1).int() + 2
 
     def _likelihood(
         self, inputs: Tensor, scales: Tensor, means: Optional[Tensor] = None
@@ -681,9 +679,17 @@ class GaussianConditional(EntropyModel):
             likelihood = self.likelihood_lower_bound(likelihood)
         return outputs, likelihood
 
+    # def build_indexes(self, scales: Tensor) -> Tensor:
+    #     scales = self.lower_bound_scale(scales)
+    #     indexes = scales.new_full(scales.size(), len(self.scale_table) - 1).int()
+    #     for s in self.scale_table[:-1]:
+    #         indexes -= (scales <= s).int()
+    #     return indexes.reshape(-1)
+
+    # slightly faster
     def build_indexes(self, scales: Tensor) -> Tensor:
         scales = self.lower_bound_scale(scales)
         indexes = scales.new_full(scales.size(), len(self.scale_table) - 1).int()
-        for s in self.scale_table[:-1]:
-            indexes -= (scales <= s).int()
-        return indexes
+        mask = (scales.unsqueeze(-1) <= self.scale_table[:-1]).int()
+        indexes -= mask.sum(dim=-1)
+        return indexes.reshape(-1)

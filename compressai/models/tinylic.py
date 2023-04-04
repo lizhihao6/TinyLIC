@@ -12,6 +12,8 @@ from timm.models.layers import trunc_normal_
 from .utils import conv, deconv, update_registered_buffers, quantize_ste, \
     Demultiplexer, Multiplexer, Demultiplexerv2, Multiplexerv2
 
+from mmcv.ops import rans_encode_with_indexes, rans_decode_with_indexes
+
 # From Balle's tensorflow compression examples
 SCALES_MIN = 0.11
 SCALES_MAX = 256
@@ -588,13 +590,10 @@ class TinyLIC(nn.Module):
         y_slices = y.split(tuple(slice_list), 1)
         y_hat_slices = []
 
-        cdf = self.gaussian_conditional.quantized_cdf.tolist()
-        cdf_lengths = self.gaussian_conditional.cdf_length.reshape(-1).int().tolist()
-        offsets = self.gaussian_conditional.offset.reshape(-1).int().tolist()
+        cdf = self.gaussian_conditional.quantized_cdf
+        cdf_lengths = self.gaussian_conditional.cdf_length
+        offsets = self.gaussian_conditional.offset
 
-        encoder = BufferedRansEncoder()
-        symbols_list = []
-        indexes_list = []
         y_strings = []
 
         for slice_index, y_slice in enumerate(y_slices):
@@ -617,8 +616,9 @@ class TinyLIC(nn.Module):
                 y_q_slice_0 = self.gaussian_conditional.quantize(y_slice_0, "symbols", means_hat_0)
                 y_hat_slice_0 = y_q_slice_0 + means_hat_0
 
-                symbols_list.extend(y_q_slice_0.reshape(-1).tolist())
-                indexes_list.extend(index_0.reshape(-1).tolist())
+                # symbols_list.extend(y_q_slice_0.reshape(-1).tolist())
+                # indexes_list.extend(index_0.reshape(-1).tolist())
+                y_strings.append(rans_encode_with_indexes(y_q_slice_0.reshape(-1), index_0, cdf, cdf_lengths, offsets))
 
                 y_hat_slice = Multiplexerv2(y_hat_slice_0, torch.zeros_like(y_hat_slice_0), 
                                             torch.zeros_like(y_hat_slice_0), torch.zeros_like(y_hat_slice_0))
@@ -637,8 +637,9 @@ class TinyLIC(nn.Module):
                 y_q_slice_1 = self.gaussian_conditional.quantize(y_slice_1, "symbols", means_hat_1)
                 y_hat_slice_1 = y_q_slice_1 + means_hat_1
 
-                symbols_list.extend(y_q_slice_1.reshape(-1).tolist())
-                indexes_list.extend(index_1.reshape(-1).tolist())
+                # symbols_list.extend(y_q_slice_1.reshape(-1).tolist())
+                # indexes_list.extend(index_1.reshape(-1).tolist())
+                y_strings.append(rans_encode_with_indexes(y_q_slice_1.reshape(-1), index_1, cdf, cdf_lengths, offsets))
 
                 y_hat_slice = Multiplexerv2(y_hat_slice_0, y_hat_slice_1, 
                                             torch.zeros_like(y_hat_slice_0), torch.zeros_like(y_hat_slice_0))
@@ -657,8 +658,9 @@ class TinyLIC(nn.Module):
                 y_q_slice_2 = self.gaussian_conditional.quantize(y_slice_2, "symbols", means_hat_2)
                 y_hat_slice_2 = y_q_slice_2 + means_hat_2
 
-                symbols_list.extend(y_q_slice_2.reshape(-1).tolist())
-                indexes_list.extend(index_2.reshape(-1).tolist())
+                # symbols_list.extend(y_q_slice_2.reshape(-1).tolist())
+                # indexes_list.extend(index_2.reshape(-1).tolist())
+                y_strings.append(rans_encode_with_indexes(y_q_slice_2.reshape(-1), index_2, cdf, cdf_lengths, offsets))
 
                 y_hat_slice = Multiplexerv2(y_hat_slice_0, y_hat_slice_1, 
                                             y_hat_slice_2, torch.zeros_like(y_hat_slice_0))
@@ -677,8 +679,9 @@ class TinyLIC(nn.Module):
                 y_q_slice_3 = self.gaussian_conditional.quantize(y_slice_3, "symbols", means_hat_3)
                 y_hat_slice_3 = y_q_slice_3 + means_hat_3
 
-                symbols_list.extend(y_q_slice_3.reshape(-1).tolist())
-                indexes_list.extend(index_3.reshape(-1).tolist())
+                # symbols_list.extend(y_q_slice_3.reshape(-1).tolist())
+                # indexes_list.extend(index_3.reshape(-1).tolist())
+                y_strings.append(rans_encode_with_indexes(y_q_slice_3.reshape(-1), index_3, cdf, cdf_lengths, offsets))
 
                 y_hat_slice = Multiplexerv2(y_hat_slice_0, y_hat_slice_1, y_hat_slice_2, y_hat_slice_3)
                 y_hat_slices.append(y_hat_slice)
@@ -701,8 +704,9 @@ class TinyLIC(nn.Module):
                 y_q_slice_anchor = self.gaussian_conditional.quantize(y_slice_anchor, "symbols", means_hat_anchor)
                 y_hat_slice_anchor = y_q_slice_anchor + means_hat_anchor
 
-                symbols_list.extend(y_q_slice_anchor.reshape(-1).tolist())
-                indexes_list.extend(index_anchor.reshape(-1).tolist())
+                # symbols_list.extend(y_q_slice_anchor.reshape(-1).tolist())
+                # indexes_list.extend(index_anchor.reshape(-1).tolist())
+                y_strings.append(rans_encode_with_indexes(y_q_slice_anchor.reshape(-1), index_anchor, cdf, cdf_lengths, offsets))
 
                 y_hat_slice = Multiplexer(y_hat_slice_anchor, torch.zeros_like(y_hat_slice_anchor))
                 sc_params = self.sc_transform_4(y_hat_slice)
@@ -720,8 +724,9 @@ class TinyLIC(nn.Module):
                 y_q_slice_non_anchor = self.gaussian_conditional.quantize(y_slice_non_anchor, "symbols", means_hat_non_anchor)
                 y_hat_slice_non_anchor = y_q_slice_non_anchor + means_hat_non_anchor
 
-                symbols_list.extend(y_q_slice_non_anchor.reshape(-1).tolist())
-                indexes_list.extend(index_non_anchor.reshape(-1).tolist())
+                # symbols_list.extend(y_q_slice_non_anchor.reshape(-1).tolist())
+                # indexes_list.extend(index_non_anchor.reshape(-1).tolist())
+                y_strings.append(rans_encode_with_indexes(y_q_slice_non_anchor.reshape(-1), index_non_anchor, cdf, cdf_lengths, offsets))
 
                 y_hat_slice = Multiplexer(y_hat_slice_anchor, y_hat_slice_non_anchor)
                 y_hat_slices.append(y_hat_slice)
@@ -744,8 +749,9 @@ class TinyLIC(nn.Module):
                 y_q_slice_anchor = self.gaussian_conditional.quantize(y_slice_anchor, "symbols", means_hat_anchor)
                 y_hat_slice_anchor = y_q_slice_anchor + means_hat_anchor
 
-                symbols_list.extend(y_q_slice_anchor.reshape(-1).tolist())
-                indexes_list.extend(index_anchor.reshape(-1).tolist())
+                # symbols_list.extend(y_q_slice_anchor.reshape(-1).tolist())
+                # indexes_list.extend(index_anchor.reshape(-1).tolist())
+                y_strings.append(rans_encode_with_indexes(y_q_slice_anchor.reshape(-1), index_anchor, cdf, cdf_lengths, offsets))
 
                 y_hat_slice = Multiplexer(torch.zeros_like(y_hat_slice_anchor), y_hat_slice_anchor)
                 sc_params = self.sc_transform_5(y_hat_slice)
@@ -763,8 +769,9 @@ class TinyLIC(nn.Module):
                 y_q_slice_non_anchor = self.gaussian_conditional.quantize(y_slice_non_anchor, "symbols", means_hat_non_anchor)
                 y_hat_slice_non_anchor = y_q_slice_non_anchor + means_hat_non_anchor
 
-                symbols_list.extend(y_q_slice_non_anchor.reshape(-1).tolist())
-                indexes_list.extend(index_non_anchor.reshape(-1).tolist())
+                # symbols_list.extend(y_q_slice_non_anchor.reshape(-1).tolist())
+                # indexes_list.extend(index_non_anchor.reshape(-1).tolist())
+                y_strings.append(rans_encode_with_indexes(y_q_slice_non_anchor.reshape(-1), index_non_anchor, cdf, cdf_lengths, offsets))
 
                 y_hat_slice = Multiplexer(y_hat_slice_non_anchor, y_hat_slice_anchor)
                 y_hat_slices.append(y_hat_slice)
@@ -781,13 +788,14 @@ class TinyLIC(nn.Module):
                 y_q_slice = self.gaussian_conditional.quantize(y_slice, "symbols", means_hat)
                 y_hat_slice = y_q_slice + means_hat
 
-                symbols_list.extend(y_q_slice.reshape(-1).tolist())
-                indexes_list.extend(index.reshape(-1).tolist())
+                # symbols_list.extend(y_q_slice.reshape(-1).tolist())
+                # indexes_list.extend(index.reshape(-1).tolist())
+                y_strings.append(rans_encode_with_indexes(y_q_slice.reshape(-1), index, cdf, cdf_lengths, offsets))
 
-        encoder.encode_with_indexes(symbols_list, indexes_list, cdf, cdf_lengths, offsets)
+        # encoder.encode_with_indexes(symbols_list, indexes_list, cdf, cdf_lengths, offsets)
 
-        y_string = encoder.flush()
-        y_strings.append(y_string)
+        # y_string = encoder.flush()
+        # y_strings.append(y_string)
 
         return {"strings": [y_strings, z_strings], 
                 "shape": z.size()[-2:]
@@ -810,15 +818,12 @@ class TinyLIC(nn.Module):
             slice_list.append(int(N-n))
             N = n
 
-        y_string = strings[0][0]
+        y_strings = strings[0]
 
         y_hat_slices = []
-        cdf = self.gaussian_conditional.quantized_cdf.tolist()
-        cdf_lengths = self.gaussian_conditional.cdf_length.reshape(-1).int().tolist()
-        offsets = self.gaussian_conditional.offset.reshape(-1).int().tolist()
-
-        decoder = RansDecoder()
-        decoder.set_stream(y_string)
+        cdf = self.gaussian_conditional.quantized_cdf
+        cdf_lengths = self.gaussian_conditional.cdf_length
+        offsets = self.gaussian_conditional.offset
 
         for slice_index in range(self.num_iters):
 
@@ -835,8 +840,10 @@ class TinyLIC(nn.Module):
                 scales_hat_0, _, _, _ = Demultiplexerv2(scales_hat)
                 means_hat_0, _, _, _ = Demultiplexerv2(means_hat)
                 index_0 = self.gaussian_conditional.build_indexes(scales_hat_0)
-                rv = decoder.decode_stream(index_0.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
-                rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                # rv = decoder.decode_stream(index_0.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
+                # rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                rv = rans_decode_with_indexes(y_strings[0], index_0, cdf, cdf_lengths, offsets).float()
+                rv = rv.reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
                 y_hat_slice_0 = self.gaussian_conditional.dequantize(rv, means_hat_0)
 
                 y_hat_slice = Multiplexerv2(y_hat_slice_0, torch.zeros_like(y_hat_slice_0), 
@@ -853,8 +860,10 @@ class TinyLIC(nn.Module):
                 _, scales_hat_1, _, _ = Demultiplexerv2(scales_hat)
                 _, means_hat_1, _, _ = Demultiplexerv2(means_hat)
                 index_1 = self.gaussian_conditional.build_indexes(scales_hat_1)
-                rv = decoder.decode_stream(index_1.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
-                rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                # rv = decoder.decode_stream(index_1.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
+                # rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                rv = rans_decode_with_indexes(y_strings[1], index_1, cdf, cdf_lengths, offsets).float()
+                rv = rv.reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
                 y_hat_slice_1 = self.gaussian_conditional.dequantize(rv, means_hat_1)
 
                 y_hat_slice = Multiplexerv2(y_hat_slice_0, y_hat_slice_1, 
@@ -871,8 +880,10 @@ class TinyLIC(nn.Module):
                 _, _, scales_hat_2, _ = Demultiplexerv2(scales_hat)
                 _, _, means_hat_2, _ = Demultiplexerv2(means_hat)
                 index_2 = self.gaussian_conditional.build_indexes(scales_hat_2)
-                rv = decoder.decode_stream(index_2.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
-                rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                # rv = decoder.decode_stream(index_2.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
+                # rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                rv = rans_decode_with_indexes(y_strings[2], index_2, cdf, cdf_lengths, offsets).float()
+                rv = rv.reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
                 y_hat_slice_2 = self.gaussian_conditional.dequantize(rv, means_hat_2)
 
                 y_hat_slice = Multiplexerv2(y_hat_slice_0, y_hat_slice_1, 
@@ -889,8 +900,10 @@ class TinyLIC(nn.Module):
                 _, _, _, scales_hat_3 = Demultiplexerv2(scales_hat)
                 _, _, _, means_hat_3 = Demultiplexerv2(means_hat)
                 index_3 = self.gaussian_conditional.build_indexes(scales_hat_3)
-                rv = decoder.decode_stream(index_3.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
-                rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                # rv = decoder.decode_stream(index_3.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
+                # rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                rv = rans_decode_with_indexes(y_strings[3], index_3, cdf, cdf_lengths, offsets).float()
+                rv = rv.reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
                 y_hat_slice_3 = self.gaussian_conditional.dequantize(rv, means_hat_3)
 
                 y_hat_slice = Multiplexerv2(y_hat_slice_0, y_hat_slice_1, y_hat_slice_2, y_hat_slice_3)
@@ -909,8 +922,10 @@ class TinyLIC(nn.Module):
                 scales_hat_anchor, _ = Demultiplexer(scales_hat)
                 means_hat_anchor, _ = Demultiplexer(means_hat)
                 index_anchor = self.gaussian_conditional.build_indexes(scales_hat_anchor)
-                rv = decoder.decode_stream(index_anchor.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
-                rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                # rv = decoder.decode_stream(index_anchor.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
+                # rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                rv = rans_decode_with_indexes(y_strings[4], index_anchor, cdf, cdf_lengths, offsets).float()
+                rv = rv.reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
                 y_hat_slice_anchor = self.gaussian_conditional.dequantize(rv, means_hat_anchor)
 
                 y_hat_slice = Multiplexer(y_hat_slice_anchor, torch.zeros_like(y_hat_slice_anchor))
@@ -926,8 +941,10 @@ class TinyLIC(nn.Module):
                 _, scales_hat_non_anchor = Demultiplexer(scales_hat)
                 _, means_hat_non_anchor = Demultiplexer(means_hat)
                 index_non_anchor = self.gaussian_conditional.build_indexes(scales_hat_non_anchor)
-                rv = decoder.decode_stream(index_non_anchor.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
-                rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                # rv = decoder.decode_stream(index_non_anchor.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
+                # rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                rv = rans_decode_with_indexes(y_strings[5], index_non_anchor, cdf, cdf_lengths, offsets).float()
+                rv = rv.reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
                 y_hat_slice_non_anchor = self.gaussian_conditional.dequantize(rv, means_hat_non_anchor)
                 
                 y_hat_slice = Multiplexer(y_hat_slice_anchor, y_hat_slice_non_anchor)
@@ -946,8 +963,10 @@ class TinyLIC(nn.Module):
                 _, scales_hat_anchor = Demultiplexer(scales_hat)
                 _, means_hat_anchor = Demultiplexer(means_hat)
                 index_anchor = self.gaussian_conditional.build_indexes(scales_hat_anchor)
-                rv = decoder.decode_stream(index_anchor.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
-                rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                # rv = decoder.decode_stream(index_anchor.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
+                # rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                rv = rans_decode_with_indexes(y_strings[6], index_anchor, cdf, cdf_lengths, offsets).float()
+                rv = rv.reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
                 y_hat_slice_anchor = self.gaussian_conditional.dequantize(rv, means_hat_anchor)
 
                 y_hat_slice = Multiplexer(torch.zeros_like(y_hat_slice_anchor), y_hat_slice_anchor)
@@ -963,8 +982,10 @@ class TinyLIC(nn.Module):
                 scales_hat_non_anchor, _ = Demultiplexer(scales_hat)
                 means_hat_non_anchor, _ = Demultiplexer(means_hat)
                 index_non_anchor = self.gaussian_conditional.build_indexes(scales_hat_non_anchor)
-                rv = decoder.decode_stream(index_non_anchor.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
-                rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                # rv = decoder.decode_stream(index_non_anchor.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
+                # rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
+                rv = rans_decode_with_indexes(y_strings[7], index_non_anchor, cdf, cdf_lengths, offsets).float()
+                rv = rv.reshape(1, -1, z_hat.shape[2]*2, z_hat.shape[3]*2)
                 y_hat_slice_non_anchor = self.gaussian_conditional.dequantize(rv, means_hat_non_anchor)
 
                 y_hat_slice = Multiplexer(y_hat_slice_non_anchor, y_hat_slice_anchor)
@@ -980,8 +1001,10 @@ class TinyLIC(nn.Module):
                 scales_hat, means_hat = gaussian_params.chunk(2, 1)
                 
                 index = self.gaussian_conditional.build_indexes(scales_hat)
-                rv = decoder.decode_stream(index.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
-                rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*4, z_hat.shape[3]*4)
+                # rv = decoder.decode_stream(index.reshape(-1).tolist(), cdf, cdf_lengths, offsets)
+                # rv = torch.Tensor(rv).reshape(1, -1, z_hat.shape[2]*4, z_hat.shape[3]*4)
+                rv = rans_decode_with_indexes(y_strings[8], index, cdf, cdf_lengths, offsets).float()
+                rv = rv.reshape(1, -1, z_hat.shape[2]*4, z_hat.shape[3]*4)
                 y_hat_slice = self.gaussian_conditional.dequantize(rv, means_hat)
                 
                 y_hat_slices.append(y_hat_slice)
