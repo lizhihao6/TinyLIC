@@ -1,0 +1,1 @@
+python -m compressai.utils.eval_model checkpoint /shared/IEEE1857_test -a tinylic -p checkpoint_q3.pth.tar --cuda
